@@ -95,52 +95,22 @@ void blit_scale(Bitmap *bitmap, u32 dstX, u32 dstY, u32 srcX, u32 srcY, u32 w, u
   rsxSetTransferScaleSurface(context, &scale, &surface);
 }
 
-#define VRAM_W 1024
-#define VRAM_H 512
+#include <stdint.h>
+#include "gp0.h"
+
 #define SCR_W 320
 #define SCR_H 240
 enum {
- PS1_SELECT=1<<0, PS1_L3=1<<1, PS1_R3=1<<2, PS1_START=1<<3,
+ PS1_SELECT=1<<0, PS1_START=1<<3,
  PS1_UP=1<<4, PS1_RIGHT=1<<5, PS1_DOWN=1<<6, PS1_LEFT=1<<7,
  PS1_L2=1<<8, PS1_R2=1<<9, PS1_L1=1<<10, PS1_R1=1<<11,
  PS1_TRIANGLE=1<<12, PS1_CIRCLE=1<<13, PS1_CROSS=1<<14, PS1_SQUARE=1<<15
 };
-static u16 vram[VRAM_W * VRAM_H];
 
-static inline u16 rgb555(int r, int g, int b) {
-  return (u16)((r>>3) | ((g>>3)<<5) | ((b>>3)<<10));
-}
 static inline u32 to_argb(u16 p) {
   u32 r = p & 31, g = (p>>5) & 31, b = (p>>10) & 31;
   r = (r<<3)|(r>>2); g = (g<<3)|(g>>2); b = (b<<3)|(b>>2);
   return 0xFF000000 | (r<<16) | (g<<8) | b;
-}
-static void vram_rect(int x, int y, int w, int h, u16 c) {
-  for (int j=0; j<h; j++)
-    for (int i=0; i<w; i++) vram[(y+j)*VRAM_W + x+i] = c;
-}
-static u16 read_pad(void) {
-  padInfo info; padData d; u16 m = 0xFFFF;
-  ioPadGetInfo(&info);
-  for (int i=0; i<MAX_PADS; i++) {
-    if (!info.status[i]) continue;
-    ioPadGetData(i, &d);
-    if (d.BTN_SELECT) m &= ~PS1_SELECT;
-    if (d.BTN_START) m &= ~PS1_START;
-    if (d.BTN_UP) m &= ~PS1_UP;
-    if (d.BTN_DOWN) m &= ~PS1_DOWN;
-    if (d.BTN_LEFT) m &= ~PS1_LEFT;
-    if (d.BTN_RIGHT) m &= ~PS1_RIGHT;
-    if (d.BTN_L1) m &= ~PS1_L1;
-    if (d.BTN_R1) m &= ~PS1_R1;
-    if (d.BTN_L2) m &= ~PS1_L2;
-    if (d.BTN_R2) m &= ~PS1_R2;
-    if (d.BTN_TRIANGLE) m &= ~PS1_TRIANGLE;
-    if (d.BTN_CIRCLE) m &= ~PS1_CIRCLE;
-    if (d.BTN_CROSS) m &= ~PS1_CROSS;
-    if (d.BTN_SQUARE) m &= ~PS1_SQUARE;
-  }
-  return m;
 }
 
 static u16 read_pad2(void) {
@@ -154,23 +124,19 @@ static u16 read_pad2(void) {
     ioPadGetData(i, &d);
     if (d.len > 0) last[i] = d;
     const padData &p = last[i];
-    if (p.BTN_SELECT) m &= ~PS1_SELECT;
-    if (p.BTN_START) m &= ~PS1_START;
-    if (p.BTN_UP) m &= ~PS1_UP;
-    if (p.BTN_DOWN) m &= ~PS1_DOWN;
-    if (p.BTN_LEFT) m &= ~PS1_LEFT;
-    if (p.BTN_RIGHT) m &= ~PS1_RIGHT;
-    if (p.BTN_L1) m &= ~PS1_L1;
-    if (p.BTN_R1) m &= ~PS1_R1;
-    if (p.BTN_L2) m &= ~PS1_L2;
-    if (p.BTN_R2) m &= ~PS1_R2;
-    if (p.BTN_TRIANGLE) m &= ~PS1_TRIANGLE;
-    if (p.BTN_CIRCLE) m &= ~PS1_CIRCLE;
-    if (p.BTN_CROSS) m &= ~PS1_CROSS;
-    if (p.BTN_SQUARE) m &= ~PS1_SQUARE;
+#define B(btn, bit) if (p.btn) m &= ~(bit)
+    B(BTN_SELECT, PS1_SELECT); B(BTN_START, PS1_START);
+    B(BTN_UP, PS1_UP); B(BTN_DOWN, PS1_DOWN);
+    B(BTN_LEFT, PS1_LEFT); B(BTN_RIGHT, PS1_RIGHT);
+    B(BTN_L1, PS1_L1); B(BTN_R1, PS1_R1);
+    B(BTN_L2, PS1_L2); B(BTN_R2, PS1_R2);
+    B(BTN_TRIANGLE, PS1_TRIANGLE); B(BTN_CIRCLE, PS1_CIRCLE);
+    B(BTN_CROSS, PS1_CROSS); B(BTN_SQUARE, PS1_SQUARE);
+#undef B
   }
   return m;
 }
+
 int main(int argc, const char *argv[])
 {
   void *host_addr = memalign(1024*1024, HOST_SIZE);
@@ -185,9 +151,11 @@ int main(int argc, const char *argv[])
   Bitmap screen;
   screen.width = SCR_W; screen.height = SCR_H; screen.offset = off;
 
+  gp0_reset();
+  demo_init();
   setRenderTarget(curr_fb);
   int px = 150, py = 110;
-  u16 col = rgb555(255, 200, 0);
+  uint32_t col = 0x0000C8FF;
   running = 1;
   while (running) {
     sysUtilCheckCallback();
@@ -196,22 +164,21 @@ int main(int argc, const char *argv[])
     if (!(pad & PS1_RIGHT)) px += 2;
     if (!(pad & PS1_UP)) py -= 2;
     if (!(pad & PS1_DOWN)) py += 2;
-    if (!(pad & PS1_CROSS)) col = rgb555(0,120,255);
-    if (!(pad & PS1_CIRCLE)) col = rgb555(255,40,40);
-    if (!(pad & PS1_SQUARE)) col = rgb555(255,60,255);
-    if (!(pad & PS1_TRIANGLE)) col = rgb555(40,255,80);
+    if (!(pad & PS1_CROSS)) col = 0x00FF7800;
+    if (!(pad & PS1_CIRCLE)) col = 0x002828FF;
+    if (!(pad & PS1_SQUARE)) col = 0x00FF3CFF;
+    if (!(pad & PS1_TRIANGLE)) col = 0x0050FF28;
     if (!(pad & PS1_SELECT) && !(pad & PS1_START)) running = 0;
     if (px < 0) px = 0;
     if (py < 0) py = 0;
     if (px > SCR_W-16) px = SCR_W-16;
     if (py > SCR_H-16) py = SCR_H-16;
 
-    for (int y=0; y<SCR_H; y++) vram_rect(0, y, SCR_W, 1, rgb555(20, y, 120));
-    vram_rect(px, py, 16, 16, col);
+    demo_frame(px, py, col, (int)frame_cnt);
 
     for (int y=0; y<SCR_H; y++)
       for (int x=0; x<SCR_W; x++)
-        pix[y*SCR_W + x] = to_argb(vram[y*VRAM_W + x]);
+        pix[y*SCR_W + x] = to_argb(gpu_vram[y*VRAM_W + x]);
 
     rsxSetClearColor(context, 0x000000);
     rsxSetClearDepthStencil(context, 0xffff);
@@ -223,9 +190,9 @@ int main(int argc, const char *argv[])
     rsxSetBlendEnable(context, GCM_TRUE);
 
     int sc = display_height / SCR_H;
-    if (sc < 1) sc = 1; if (sc > 3) sc = 3;
-    blit_scale(&screen, display_width/2,
-               display_height/2, 0, 0, SCR_W, SCR_H, (float)sc);
+    if (sc < 1) sc = 1;
+    if (sc > 3) sc = 3;
+    blit_scale(&screen, display_width/2, display_height/2, 0, 0, SCR_W, SCR_H, (float)sc);
     flip();
     frame_cnt++;
   }
