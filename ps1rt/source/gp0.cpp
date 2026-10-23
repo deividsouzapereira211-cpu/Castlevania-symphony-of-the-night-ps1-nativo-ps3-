@@ -303,7 +303,7 @@ void gp0_reset(void) {
   S.ax1 = 1023; S.ay1 = 511;
 }
 
-void gp0_write(uint32_t w) {
+void gp0_exec(uint32_t w) {
   if (S.xfer) { xfer_word(w); return; }
   if (L.active) { line_word(w); return; }
   if (S.n == 0) {
@@ -320,3 +320,7 @@ void gp0_write(uint32_t w) {
     exec_cmd();
   }
 }
+
+static void (*g_hook)(uint32_t) = 0;
+void gp0_set_hook(void (*h)(uint32_t)) { g_hook = h; }
+void gp0_write(uint32_t w) { if (g_hook) g_hook(w); else gp0_exec(w); }

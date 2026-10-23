@@ -97,6 +97,8 @@ void blit_scale(Bitmap *bitmap, u32 dstX, u32 dstY, u32 srcX, u32 srcY, u32 w, u
 
 #include <stdint.h>
 #include "gp0.h"
+#include "ps1mem.h"
+#include "mips_gen.h"
 
 #define SCR_W 320
 #define SCR_H 240
@@ -152,7 +154,10 @@ int main(int argc, const char *argv[])
   screen.width = SCR_W; screen.height = SCR_H; screen.offset = off;
 
   gp0_reset();
+  ps1_mem_reset();
+  ps1_capture_begin();
   demo_init();
+  ps1_capture_end();
   setRenderTarget(curr_fb);
   int px = 150, py = 110;
   uint32_t col = 0x0000C8FF;
@@ -174,7 +179,9 @@ int main(int argc, const char *argv[])
     if (px > SCR_W-16) px = SCR_W-16;
     if (py > SCR_H-16) py = SCR_H-16;
 
-    demo_frame(px, py, col, (int)frame_cnt);
+    ps1_capture_begin();
+    mips_frame(px, py, col);
+    ps1_capture_end();
 
     for (int y=0; y<SCR_H; y++)
       for (int x=0; x<SCR_W; x++)

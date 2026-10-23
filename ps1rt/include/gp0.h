@@ -13,4 +13,6 @@ void gp0_write(uint32_t w);
 void demo_init(void);
 void demo_frame(int px, int py, uint32_t rgb, int frame);
 
+void gp0_exec(uint32_t w);
+void gp0_set_hook(void (*h)(uint32_t));
 #endif
