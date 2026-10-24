@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-# mipsrecomp.py - recompilador estatico MIPS R3000 (PS1) -> C++  (v1)
-# Inclui um mini assembler e um programa de teste que desenha pelo GPU.
+# mipsrecomp.py - recompilador estatico MIPS R3000 (PS1) -> C++  (v2)
+# Inclui um mini assembler. Le tools/selftest.asm (autoteste que desenha pelo GPU).
 # Uso: python3 tools/mipsrecomp.py ps1rt
 import sys, os
 
@@ -12,9 +12,13 @@ def reg(s):
     s = s.strip().lstrip("$")
     return RN[s] if s in RN else int(s)
 
+# ------------------------------------------------------------------ assembler
 RTYPE = {"addu":0x21,"subu":0x23,"and":0x24,"or":0x25,"xor":0x26,"nor":0x27,"slt":0x2A,"sltu":0x2B}
 ITYPE = {"addiu":9,"slti":10,"sltiu":11,"andi":12,"ori":13,"xori":14}
-MEM = {"lb":0x20,"lh":0x21,"lw":0x23,"lbu":0x24,"lhu":0x25,"sb":0x28,"sh":0x29,"sw":0x2B}
+MEM = {"lb":0x20,"lh":0x21,"lwl":0x22,"lw":0x23,"lbu":0x24,"lhu":0x25,"lwr":0x26,
+       "sb":0x28,"sh":0x29,"swl":0x2A,"sw":0x2B,"swr":0x2E}
+SHV = {"sllv":4,"srlv":6,"srav":7}
+MULDIV = {"mult":24,"multu":25,"div":26,"divu":27}
 
 def assemble(src, base):
     items, labels = [], {}
@@ -32,6 +36,9 @@ def assemble(src, base):
             items.append(("sll", ["zero", "zero", "0"]))
         elif m == "move":
             items.append(("addu", [a[0], "zero", a[1]]))
+        elif m == "la":
+            items.append(("lui", [a[0], "@hi:" + a[1]]))
+            items.append(("ori", [a[0], a[0], "@lo:" + a[1]]))
         elif m == "li":
             v = int(a[1], 0) & 0xFFFFFFFF
             if (v >> 16) == 0:
@@ -43,6 +50,10 @@ def assemble(src, base):
                 items.append(("ori", [a[0], a[0], str(v & 0xFFFF)]))
         else:
             items.append((m, a))
+    def num(x):
+        if x.startswith("@hi:"): return labels[x[4:]] >> 16
+        if x.startswith("@lo:"): return labels[x[4:]] & 0xFFFF
+        return int(x, 0)
     words = []
     for i, (m, a) in enumerate(items):
         pc = base + 4 * i
@@ -51,10 +62,28 @@ def assemble(src, base):
         elif m in ("sll", "srl", "sra"):
             fn = {"sll": 0, "srl": 2, "sra": 3}[m]
             w = (reg(a[1]) << 16) | (reg(a[0]) << 11) | (int(a[2], 0) << 6) | fn
+        elif m in SHV:
+            w = (reg(a[2]) << 21) | (reg(a[1]) << 16) | (reg(a[0]) << 11) | SHV[m]
+        elif m in MULDIV:
+            w = (reg(a[0]) << 21) | (reg(a[1]) << 16) | MULDIV[m]
+        elif m in ("mfhi", "mflo"):
+            w = (reg(a[0]) << 11) | (16 if m == "mfhi" else 18)
+        elif m in ("mthi", "mtlo"):
+            w = (reg(a[0]) << 21) | (17 if m == "mthi" else 19)
+        elif m in ("mfc0", "mtc0"):
+            w = (16 << 26) | ((0 if m == "mfc0" else 4) << 21) | (reg(a[0]) << 16) | (reg(a[1]) << 11)
+        elif m in ("bltz", "bgez", "blez", "bgtz"):
+            off = (labels[a[1]] - (pc + 4)) >> 2
+            if m in ("bltz", "bgez"):
+                w = (1 << 26) | (reg(a[0]) << 21) | ((0 if m == "bltz" else 1) << 16) | (off & 0xFFFF)
+            else:
+                w = ((6 if m == "blez" else 7) << 26) | (reg(a[0]) << 21) | (off & 0xFFFF)
+        elif m == "jalr":
+            w = (reg(a[0]) << 21) | (31 << 11) | 9
         elif m in ITYPE:
-            w = (ITYPE[m] << 26) | (reg(a[1]) << 21) | (reg(a[0]) << 16) | (int(a[2], 0) & 0xFFFF)
+            w = (ITYPE[m] << 26) | (reg(a[1]) << 21) | (reg(a[0]) << 16) | (num(a[2]) & 0xFFFF)
         elif m == "lui":
-            w = (15 << 26) | (reg(a[0]) << 16) | (int(a[1], 0) & 0xFFFF)
+            w = (15 << 26) | (reg(a[0]) << 16) | (num(a[1]) & 0xFFFF)
         elif m in MEM:
             off, _, r = a[1].partition("(")
             w = (MEM[m] << 26) | (reg(r.rstrip(")")) << 21) | (reg(a[0]) << 16) | (int(off or "0", 0) & 0xFFFF)
@@ -70,73 +99,7 @@ def assemble(src, base):
         words.append(w & 0xFFFFFFFF)
     return words, labels
 
-TEST_ASM = """
-main:
-    addiu $sp, $sp, -32
-    sw $ra, 28($sp)
-    sw $s0, 24($sp)
-    sw $s1, 20($sp)
-    sw $s2, 16($sp)
-    sw $s3, 12($sp)
-    move $s0, $a0
-    move $s1, $a1
-    move $s2, $a2
-    lui $t0, 0x1F80
-    ori $t0, $t0, 0x1810
-    lui $t1, 0xE300
-    sw $t1, 0($t0)
-    lui $t1, 0xE403
-    ori $t1, $t1, 0xBD3F
-    sw $t1, 0($t0)
-    lui $t1, 0xE500
-    sw $t1, 0($t0)
-    move $s3, $zero
-bars:
-    sll $t2, $s3, 5
-    sll $t3, $s3, 3
-    addu $a0, $t2, $t3
-    move $a1, $zero
-    li $a2, 0x00F00028
-    li $t5, 255
-    subu $t5, $t5, $t2
-    sll $t5, $t5, 8
-    or $a3, $t2, $t5
-    lui $t6, 0x0080
-    or $a3, $a3, $t6
-    jal put_rect
-    nop
-    addiu $s3, $s3, 1
-    slti $t7, $s3, 8
-    bne $t7, $zero, bars
-    nop
-    move $a0, $s0
-    move $a1, $s1
-    li $a2, 0x00100010
-    jal put_rect
-    move $a3, $s2
-    lw $s3, 12($sp)
-    lw $s2, 16($sp)
-    lw $s1, 20($sp)
-    lw $s0, 24($sp)
-    lw $ra, 28($sp)
-    addiu $sp, $sp, 32
-    jr $ra
-    nop
-put_rect:
-    lui $t0, 0x1F80
-    ori $t0, $t0, 0x1810
-    lui $t1, 0x6000
-    or $t1, $t1, $a3
-    sw $t1, 0($t0)
-    sll $t2, $a1, 16
-    andi $t3, $a0, 0x7FF
-    or $t2, $t2, $t3
-    sw $t2, 0($t0)
-    sw $a2, 0($t0)
-    jr $ra
-    nop
-"""
-
+# ------------------------------------------------------------------ recompilador
 def sx16(v):
     return v - 0x10000 if v & 0x8000 else v
 
@@ -152,6 +115,7 @@ def setr(d, e):
     return "" if d == 0 else "R[%d] = %s;" % (d, e)
 
 def stmt(w):
+    """C de uma instrucao que nao e desvio."""
     op = w >> 26
     rs, rt, rd = (w >> 21) & 31, (w >> 16) & 31, (w >> 11) & 31
     sh, fn = (w >> 6) & 31, w & 63
@@ -204,6 +168,36 @@ def stmt(w):
     if op == 35:      return setr(rt, "ps1_r32(%s)" % off) if rt else "(void)ps1_r32(%s);" % off
     if op == 36:      return setr(rt, "ps1_r8(%s)" % off) if rt else "(void)ps1_r8(%s);" % off
     if op == 37:      return setr(rt, "ps1_r16(%s)" % off) if rt else "(void)ps1_r16(%s);" % off
+    if op == 34:
+        if rt == 0: return ""
+        return ("{ uint32_t a = %s, v = ps1_r32(a & ~3u), r = R[%d]; "
+                "switch (a & 3) { case 0: r = (r & 0x00FFFFFFu) | (v << 24); break; "
+                "case 1: r = (r & 0x0000FFFFu) | (v << 16); break; "
+                "case 2: r = (r & 0x000000FFu) | (v << 8); break; default: r = v; break; } R[%d] = r; }") % (off, rt, rt)
+    if op == 38:
+        if rt == 0: return ""
+        return ("{ uint32_t a = %s, v = ps1_r32(a & ~3u), r = R[%d]; "
+                "switch (a & 3) { case 0: r = v; break; "
+                "case 1: r = (r & 0xFF000000u) | (v >> 8); break; "
+                "case 2: r = (r & 0xFFFF0000u) | (v >> 16); break; default: r = (r & 0xFFFFFF00u) | (v >> 24); break; } R[%d] = r; }") % (off, rt, rt)
+    if op == 42:
+        return ("{ uint32_t a = %s, v = ps1_r32(a & ~3u), r = R[%d]; "
+                "switch (a & 3) { case 0: v = (v & 0xFFFFFF00u) | (r >> 24); break; "
+                "case 1: v = (v & 0xFFFF0000u) | (r >> 16); break; "
+                "case 2: v = (v & 0xFF000000u) | (r >> 8); break; default: v = r; break; } ps1_w32(a & ~3u, v); }") % (off, rt)
+    if op == 46:
+        return ("{ uint32_t a = %s, v = ps1_r32(a & ~3u), r = R[%d]; "
+                "switch (a & 3) { case 0: v = r; break; "
+                "case 1: v = (v & 0x000000FFu) | (r << 8); break; "
+                "case 2: v = (v & 0x0000FFFFu) | (r << 16); break; default: v = (v & 0x00FFFFFFu) | (r << 24); break; } ps1_w32(a & ~3u, v); }") % (off, rt)
+    if op == 16:
+        if rs == 0:  return setr(rt, "C0[%d]" % rd)
+        if rs == 4:  return "C0[%d] = %s;" % (rd, B)
+        if w & 0x3F == 0x10:
+            return "C0[12] = (C0[12] & 0xFFFFFFF0u) | ((C0[12] >> 2) & 0xFu);"
+        warn("COP0 rs=%d" % rs); return "/* cop0 */"
+    if op in (18, 50, 58):
+        warn("GTE/COP2"); return "/* GTE nao suportado */"
     if op == 40:      return "ps1_w8(%s, (uint8_t)%s);" % (off, B)
     if op == 41:      return "ps1_w16(%s, (uint16_t)%s);" % (off, B)
     if op == 43:      return "ps1_w32(%s, %s);" % (off, B)
@@ -217,7 +211,7 @@ def is_branch(w):
 def is_cond(w):
     return (w >> 26) in (1, 4, 5, 6, 7)
 
-def recompile(words, base, entries):
+def recompile(words, base, entries, all_labels=False):
     n = len(words)
     end = base + 4 * n
     inr = lambda a: base <= a < end and a % 4 == 0
@@ -234,6 +228,8 @@ def recompile(words, base, entries):
             targets.add(((pc + 4) & 0xF0000000) | ((w & 0x3FFFFFF) << 2)); targets.add(pc + 8)
         elif op == 0 and fn == 9:
             targets.add(pc + 8)
+    if all_labels:
+        targets |= set(range(base, end, 4))
     targets = {t for t in targets if inr(t)}
 
     def go(a):
@@ -284,7 +280,7 @@ def recompile(words, base, entries):
             if slot:
                 out.append("    " + slot)
             out.append("    " + go(tgt) + " }")
-        else:
+        else:  # jr / jalr
             out.append("  { tgt = R[%d];" % rs)
             if fn == 9 and rd:
                 out.append("    R[%d] = 0x%08Xu;" % (rd, u32(pc + 8)))
@@ -299,8 +295,7 @@ def recompile(words, base, entries):
 #include "ps1mem.h"
 #include "mips_gen.h"
 
-static uint32_t R[32];
-static uint32_t HI __attribute__((unused)), LO __attribute__((unused));
+static uint32_t R[32], C0[32], HI, LO;
 #define RET_ADDR 0xFFFF0000u
 
 static void run(uint32_t pc) {
@@ -318,6 +313,13 @@ dispatch:
   goto dispatch;
 }
 
+uint32_t mips_reg(int i) { return R[i & 31]; }
+void mips_set_reg(int i, uint32_t v) { if (i & 31) R[i & 31] = v; }
+uint32_t mips_hi(void) { return HI; }
+uint32_t mips_lo(void) { return LO; }
+void mips_set_hilo(uint32_t hi, uint32_t lo) { HI = hi; LO = lo; }
+void mips_call(uint32_t pc) { R[31] = RET_ADDR; run(pc); }
+
 void mips_frame(int px, int py, uint32_t col) {
   R[4] = (uint32_t)px; R[5] = (uint32_t)py; R[6] = col;
   R[29] = 0x801FFF00u; R[31] = RET_ADDR;
@@ -330,14 +332,24 @@ HEADER = """#ifndef MIPS_GEN_H
 #define MIPS_GEN_H
 #include <stdint.h>
 void mips_frame(int px, int py, uint32_t col);
+uint32_t mips_reg(int i);
+void mips_set_reg(int i, uint32_t v);
+uint32_t mips_hi(void);
+uint32_t mips_lo(void);
+void mips_set_hilo(uint32_t hi, uint32_t lo);
+void mips_call(uint32_t pc);
 #endif
 """
 
 def main():
-    outdir = sys.argv[1] if len(sys.argv) > 1 else "ps1rt"
+    args = [a for a in sys.argv[1:] if not a.startswith("--")]
+    outdir = args[0] if args else "ps1rt"
     base = 0x80010000
-    words, labels = assemble(TEST_ASM, base)
-    code = recompile(words, base, [labels["main"]])
+    fn = os.path.join(os.path.dirname(os.path.abspath(__file__)), "selftest.asm")
+    asm = open(fn).read()
+    words, labels = assemble(asm, base)
+    entries = [labels["main"]] + [v for k, v in labels.items() if k.startswith("fn_")]
+    code = recompile(words, base, entries, "--all" in sys.argv)
     with open(os.path.join(outdir, "source", "mips_gen.cpp"), "w") as f:
         f.write(code)
     with open(os.path.join(outdir, "include", "mips_gen.h"), "w") as f:
