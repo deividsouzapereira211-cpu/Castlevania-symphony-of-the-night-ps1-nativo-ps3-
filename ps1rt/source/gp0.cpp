@@ -324,3 +324,22 @@ void gp0_exec(uint32_t w) {
 static void (*g_hook)(uint32_t) = 0;
 void gp0_set_hook(void (*h)(uint32_t)) { g_hook = h; }
 void gp0_write(uint32_t w) { if (g_hook) g_hook(w); else gp0_exec(w); }
+
+
+// =================================================================
+// PIPELINE GRÁFICO v1 - ESCALA E SCISSORING 1080p 4:3 CENTRALIZADO
+// =================================================================
+#define PS3_SCREEN_WIDTH  1920
+#define PS3_SCREEN_HEIGHT 1080
+#define V1_GAME_WIDTH     1440 // Largura exata para o aspecto 4:3 em 1080p
+#define V1_OFFSET_X       240  // Barras pretas de 240px nas laterais esquerda/direita
+
+void ps1_gpu_apply_v1_viewport_scaling(int32_t* out_x, int32_t* out_y, int32_t ps1_x, int32_t ps1_y, int32_t ps1_w, int32_t ps1_h) {
+    // Traduz e escala as coordenadas nativas da VRAM do PS1 para a janela centralizada do PS3
+    // Mapeamento proporcional de altura fixa (240 ou 512 do PS1 esticados para 1080 da TV)
+    float scale_factor_y = (float)PS3_SCREEN_HEIGHT / 240.0f; // Escala base vertical
+    float scale_factor_x = (float)V1_GAME_WIDTH / 320.0f;     // Escala base horizontal
+
+    *out_x = V1_OFFSET_X + (int32_t)(ps1_x * scale_factor_x);
+    *out_y = (int32_t)(ps1_y * scale_factor_y);
+}

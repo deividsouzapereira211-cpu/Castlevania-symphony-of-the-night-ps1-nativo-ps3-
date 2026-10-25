@@ -241,3 +241,27 @@ void ps1_core_hybrid_loop() {
         }
     }
 }
+
+
+#include <sys/time_util.h>
+
+// Controladores de tempo para cravar 60 FPS
+#define TIME_PER_FRAME_MS (1000 / 60) // ~16.66ms por quadro
+
+void ps1_wait_for_next_frame() {
+    static uint64_t last_frame_time = 0;
+    uint64_t current_time = sys_time_get_system_time() / 1000; // Converte para milissegundos
+
+    if (last_frame_time == 0) {
+        last_frame_time = current_time;
+        return;
+    }
+
+    uint64_t elapsed = current_time - last_frame_time;
+    if (elapsed < TIME_PER_FRAME_MS) {
+        // Faz o PPE do PS3 dormir o tempo restante exato para cravar 60 FPS
+        sys_timer_usleep((TIME_PER_FRAME_MS - elapsed) * 1000);
+    }
+    
+    last_frame_time = sys_time_get_system_time() / 1000;
+}

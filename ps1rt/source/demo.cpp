@@ -25,6 +25,30 @@ extern "C" void ps1_execute_single_instruction_interpreter() {
     uint32_t next_pc = ps1_cpu_regs.pc + 4;
 
     switch (op) {
+        case 0x04: // BEQ (Branch if Equal)
+            if (ps1_cpu_regs.gpr[rs] == ps1_cpu_regs.gpr[rt]) {
+                next_pc = ps1_cpu_regs.pc + 4 + (imm << 2);
+            }
+            break;
+            
+        case 0x05: // BNE (Branch if Not Equal)
+            if (ps1_cpu_regs.gpr[rs] != ps1_cpu_regs.gpr[rt]) {
+                next_pc = ps1_cpu_regs.pc + 4 + (imm << 2);
+            }
+            break;
+
+        case 0x06: // BLEZ (Branch if Less Than or Equal to Zero)
+            if ((int32_t)ps1_cpu_regs.gpr[rs] <= 0) {
+                next_pc = ps1_cpu_regs.pc + 4 + (imm << 2);
+            }
+            break;
+
+        case 0x07: // BGTZ (Branch if Greater Than Zero)
+            if ((int32_t)ps1_cpu_regs.gpr[rs] > 0) {
+                next_pc = ps1_cpu_regs.pc + 4 + (imm << 2);
+            }
+            break;
+
         case 0x00: // SPECIAL (Registradores R-Type)
             if ((instr & 0x3F) == 0x21) { // ADDU
                 ps1_cpu_regs.gpr[rd] = ps1_cpu_regs.gpr[rs] + ps1_cpu_regs.gpr[rt];
