@@ -360,3 +360,19 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+# Ganchos de Transição Híbrida Automática
+
+def translate_branch_target(target_address, is_link=False, reg_source=None):
+    if reg_source is not None:
+        if is_link:
+            return f"ps1_cpu_regs.ra = current_pc + 8; ps1_cpu_regs.pc = ps1_cpu_regs.gpr[{reg_source}]; if (ps1_cpu_regs.pc >= 0x80010000 && ps1_cpu_regs.pc <= 0x8009FFFF) {{ execute_recompiled_block(ps1_cpu_regs.pc); }} else {{ ps1_cpu_regs.interpreter_mode = true; return; }}"
+        else:
+            return f"ps1_cpu_regs.pc = ps1_cpu_regs.gpr[{reg_source}]; if (ps1_cpu_regs.pc >= 0x80010000 && ps1_cpu_regs.pc <= 0x8009FFFF) {{ goto *dispatch_table[ps1_cpu_regs.pc & 0xFFFFF]; }} else {{ ps1_cpu_regs.interpreter_mode = true; return; }}"
+    if 0x80010000 <= target_address <= 0x8009FFFF:
+        if is_link: return f"func_{target_address:08X}();"
+        else: return f"goto label_{target_address:08X};"
+    elif 0x800A0000 <= target_address <= 0x801FFFFF:
+        if is_link: return f"ps1_cpu_regs.ra = current_pc + 8; ps1_cpu_regs.pc = {hex(target_address)}; ps1_cpu_regs.interpreter_mode = true; return;"
+        else: return f"ps1_cpu_regs.pc = {hex(target_address)}; ps1_cpu_regs.interpreter_mode = true; return;"
+    else: return f"ps1_trigger_bus_error({hex(target_address)});"

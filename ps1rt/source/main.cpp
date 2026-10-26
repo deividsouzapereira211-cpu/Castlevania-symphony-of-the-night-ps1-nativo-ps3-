@@ -206,3 +206,62 @@ int main(int argc, const char *argv[])
   printf("ps1rt finished...\n");
   return 0;
 }
+
+
+// =================================================================
+// MOTOR DE EXECUÇÃO HÍBRIDO - TRANSICAO NATIVA / INTERPRETADOR
+// =================================================================
+extern "C" void execute_recompiled_block(uint32_t pc);
+extern "C" void ps1_execute_single_instruction_interpreter();
+
+void ps1_core_hybrid_loop() {
+    // Ponto de entrada padrao do SotN apos o boot
+    if (ps1_cpu_regs.pc == 0) {
+        ps1_cpu_regs.pc = 0x80010DFC;
+        ps1_cpu_regs.interpreter_mode = false;
+    }
+
+    while (true) {
+        if (!ps1_cpu_regs.interpreter_mode) {
+            // Roda os blocos traduzidos estaticamente a velocidade maxima no PPE do PS3
+            execute_recompiled_block(ps1_cpu_regs.pc);
+        } else {
+            // Fallback: assume o controle ciclo a ciclo para o DRA.BIN e overlays
+            ps1_execute_single_instruction_interpreter();
+            
+            // Condicao de retorno automatico para o binario nativo estavel
+            if (ps1_cpu_regs.pc >= 0x80010000 && ps1_cpu_regs.pc <= 0x8009FFFF) {
+                ps1_cpu_regs.interpreter_mode = false;
+            }
+        }
+        
+        // Mantem o blit de video ativo na proporcao 4:3 clássica do SotN
+        if (ps1_gpu_check_vblank()) {
+            ps1_gpu_blit_to_rsx_1080p();
+        }
+    }
+}
+
+
+#include <sys/time_util.h>
+
+// Controladores de tempo para cravar 60 FPS
+#define TIME_PER_FRAME_MS (1000 / 60) // ~16.66ms por quadro
+
+void ps1_wait_for_next_frame() {
+    static uint64_t last_frame_time = 0;
+    uint64_t current_time = sys_time_get_system_time() / 1000; // Converte para milissegundos
+
+    if (last_frame_time == 0) {
+        last_frame_time = current_time;
+        return;
+    }
+
+    uint64_t elapsed = current_time - last_frame_time;
+    if (elapsed < TIME_PER_FRAME_MS) {
+        // Faz o PPE do PS3 dormir o tempo restante exato para cravar 60 FPS
+        sys_timer_usleep((TIME_PER_FRAME_MS - elapsed) * 1000);
+    }
+    
+    last_frame_time = sys_time_get_system_time() / 1000;
+}

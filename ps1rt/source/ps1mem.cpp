@@ -152,3 +152,41 @@ void ps1_capture_end(void) {
   ps1_w32(0x1F8010A4, 0);
   ps1_w32(0x1F8010A8, 0x01000401);
 }
+
+
+// =================================================================
+// SISTEMA HLE v1 - CARREGAMENTO DE ARQUIVOS (DISCO -> RAM NATIVA)
+// =================================================================
+#include <stdio.h>
+#include <string.h>
+
+extern uint8_t ps1_ram_nativa[2 * 1024 * 1024];
+extern bool ps1_cpu_regs_interpreter_mode;
+
+void ps1_hle_load_overlay_to_ram(const char* ps1_filename, uint32_t target_vaddr) {
+    // No PS3 real, os assets ficam guardados no diretorio de instalacao da USRDIR
+    char ps3_path[256];
+    snprintf(ps3_path, sizeof(ps3_path), "dev_hdd0/game/PS1RT0001/USRDIR/%s", ps1_filename);
+    
+    printf("[HLE] Tentando abrir overlay: %s para a RAM: 0x%08X\n", ps1_filename, target_vaddr);
+    
+    FILE* file = fopen(ps3_path, "rb");
+    if (!file) {
+        // Fallback local caso esteja testando no Codespaces/PC sem a pasta completa do PS3
+        snprintf(ps3_path, sizeof(ps3_path), "share/%s", ps1_filename);
+        file = fopen(ps3_path, "rb");
+    }
+
+    if (file) {
+        // Calcula o offset exato eliminando o prefixo virtual MIPS (0x80000000)
+        uint32_t ram_offset = target_vaddr & 0x1FFFFF;
+        
+        // Le o binario bruto direto para o espaco fisico contiguo da RAM do PS3
+        size_t bytes_read = fread(&ps1_ram_nativa[ram_offset], 1, 1.5 * 1024 * 1024, file);
+        fclose(file);
+        
+        printf("[HLE OK] Carregados %zu bytes do arquivo %s na RAM nativa!\n", bytes_read, ps1_filename);
+    } else {
+        printf("[HLE ERRO] Arquivo de overlay %s nao encontrado no disco!\n", ps1_filename);
+    }
+}
